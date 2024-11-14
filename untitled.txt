@@ -1,0 +1,116 @@
+np.random.seed(0)
+enso_index = np.random.normal(0, 1, len(dsp['time']))  # 替换为实际的 ENSO 指数数据
+
+# 根据 ENSO 指数确定相位
+enso_phase = xr.DataArray(
+    np.where(enso_index > 0.5, 1, np.where(enso_index < -0.5, -1, 0)),
+    coords=[dsp['time']],
+    dims=['time']
+)
+
+# 计算正相（El Niño）和负相（La Niña）期间的降水平均
+prcp_el_nino = dsp['prcp'].sel(time=enso_phase == 1).mean(dim='time')
+prcp_la_nina = dsp['prcp'].sel(time=enso_phase == -1).mean(dim='time')
+
+# 计算正相与负相的降水差异
+prcp_difference = prcp_el_nino - prcp_la_nina
+
+# 绘制降水差异图
+import matplotlib.pyplot as plt
+import cartopy.crs as ccrs
+
+plt.figure(figsize=(12, 6))
+ax = plt.axes(projection=ccrs.PlateCarree())
+ax.coastlines()
+c = plt.pcolormesh(
+    prcp_difference.X, prcp_difference.Y, prcp_difference,
+    cmap='BrBG', shading='auto', transform=ccrs.PlateCarree()
+)
+plt.colorbar(c, label='Precipitation Difference (mm/day)')
+plt.title('Difference in Precipitation: El Niño - La Niña')
+plt.xlabel('Longitude')
+plt.ylabel('Latitude')
+plt.show()
+
+
+
+
+
+
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
+
+def calculate_enso_composite(dsp, sst_rolling_mean, threshold=0.5):
+    """
+    计算ENSO正负相位的降水合成及差异
+    
+    参数:
+    dsp : xarray.Dataset
+        包含降水数据的数据集
+    sst_rolling_mean : xarray.DataArray
+        ONI指数时间序列
+    threshold : float
+        ENSO相位判定阈值
+    
+    返回:
+    xarray.Dataset
+        包含合成结果和差异的数据集
+    """
+    # 确保时间对齐
+    common_times = dsp.time.isin(sst_rolling_mean.time)
+    dsp = dsp.sel(time=dsp.time[common_times])
+    sst = sst_rolling_mean.sel(time=dsp.time)
+    
+    # 定义ENSO相位
+    pos_phase = sst >= threshold
+    neg_phase = sst <= -threshold
+    
+    # 计算合成平均
+    pos_composite = dsp.prcp.where(pos_phase).mean('time')
+    neg_composite = dsp.prcp.where(neg_phase).mean('time')
+    
+    # 计算差异
+    diff_composite = pos_composite - neg_composite
+    
+    return pos_composite, neg_composite, diff_composite
+
+def plot_precip_composite_diff(diff_composite, significance_level=0.05):
+    """
+    绘制ENSO相位降水差异的全球分布图
+    """
+    # 创建图形
+    fig = plt.figure(figsize=(15, 8))
+    ax = plt.axes(projection=ccrs.Robinson(central_longitude=180))
+    
+    # 设置地图要素
+    ax.coastlines()
+    ax.add_feature(cfeature.BORDERS, linewidth=0.5, alpha=0.3)
+    ax.gridlines(alpha=0.3)
+    
+    # 设置颜色映射
+    levels = np.linspace(-3, 3, 13)
+    cmap = plt.cm.RdBu_r
+    
+    # 绘制差异
+    im = diff_composite.plot.contourf(ax=ax, 
+                                    transform=ccrs.PlateCarree(),
+                                    levels=levels,
+                                    cmap=cmap,
+                                    extend='both',
+                                    add_colorbar=False)
+    
+    # 添加色标
+    cb = plt.colorbar(im, orientation='horizontal', pad=0.05, aspect=50)
+    cb.set_label('Precipitation Difference (mm/day)', fontsize=10)
+    
+    # 设置标题
+    plt.title('ENSO Precipitation Composite Difference\n(El Niño - La Niña)', 
+             pad=20, fontsize=12)
+    
+    return fig, ax
+
+# 计算合成
+pos_comp, neg_comp, diff_comp = calculate_enso_composite(dsp, sst_rolling_mean)
+
+# 绘制差异图
+fig, ax = plot_precip_composite_diff(diff_comp)
